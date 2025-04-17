@@ -3,6 +3,7 @@ import netCDF4 as nc4;      import pandas as pd
 import numpy as np;         import pathlib as pl
 import requests;            import json
 
+from bs4 import BeautifulSoup;
 from sklearn.neighbors import BallTree
 
 
@@ -148,3 +149,86 @@ def extract_model_wse_and_ice(name, stations, years, root):
     }).reset_index()
 
     return df_all, df_daily
+
+def find_columns(data):
+    data2 = []
+    for f in data.split(' '):
+        if f != '':
+            data2.append(f)   
+    return data2
+
+def evaluate_harmonics(stations:pd.DataFrame,constituents:list,amplitudes,phas):
+    adcirc_tidal = {}
+    NOAA_Tidal_database = {}
+    for station in stations[:]:
+        url = r'https://tidesandcurrents.noaa.gov/harcon.html?unit=0&timezone=0&id={}'.format(station.split(':')[1])
+        r = requests.get(url)
+        data = r.text
+        soup = BeautifulSoup(data, "lxml")
+        #---Data
+        nm = soup.find_all('h3')
+        name_stn=str(nm)[5:-6].split(', ')[-1]
+        data = soup.find_all('table')[0] 
+        data_rows = data.find_all('tr')[1:]
+        name1 = []
+        amp1 = []
+        phase1 = []
+        for row in data_rows:
+            d = row.find_all('td')
+            if d[1].get_text() in constituents:
+                name = d[1].get_text() 
+                amp = d[2].get_text()
+                phase = d[3].get_text()
+                speed = d[4].get_text()
+                fullname = d[5].get_text()
+                name1.append(name)
+                amp1.append(amp)
+                phase1.append(phase)
+        NOAA_Tidal_database.update({f'Station:{name_stn} ID:{station}':{'amp':{},'phas':{}}})
+        for n in range(len(name1)):
+            NOAA_Tidal_database[f'Station:{name_stn} ID:{station}']['amp'].update({name1[n]:float(amp1[n])})
+            NOAA_Tidal_database[f'Station:{name_stn} ID:{station}']['phas'].update({name1[n]:float(phase1[n])})
+
+        adcirc_tidal.update({f'{station}':{'amp':{},'phas':{}}})
+        for j in constituents:
+            adcirc_tidal[f'{station}']['amp'].update({j:amplitudes[j][stations.index(station)]})
+            adcirc_tidal[f'{station}']['phas'].update({j:phas[j][stations.index(station)]})
+    return adcirc_tidal,NOAA_Tidal_database
+
+#from selenium import webdriver
+#from selenium.webdriver.chrome.options import Options
+import time
+def noaa_harmonics_selenium(station_id, station_name, state, constituents):
+    name_encoded = quote(station_name)
+    url = f"https://tidesandcurrents.noaa.gov/harcon.html?unit=0&timezone=0&id={station_id}&name={name_encoded}&state={state}"
+
+    # Setup headless Chrome
+    options = Options()
+    options.headless = True
+    driver = webdriver.Chrome(options=options)
+
+    # Load and wait for JS
+    driver.get(url)
+    time.sleep(3)  # Wait for JS to load
+
+    soup = BeautifulSoup(driver.page_source, "html.parser")
+    driver.quit()
+
+    # Scrape table
+    table = soup.find("table")
+    if not table:
+        print(f"⚠️ No table found for {station_name}")
+        return None
+
+    data = []
+    for row in table.find_all("tr")[1:]:
+        cols = row.find_all("td")
+        if len(cols) >= 4:
+            constituent = cols[1].get_text(strip=True)
+            amp = cols[2].get_text(strip=True)
+            phase = cols[3].get_text(strip=True)
+            if constituent in constituents:
+                data.append([constituent, float(amp), float(phase)])
+
+    df = pd.DataFrame(data, columns=["Constituent", "Amplitude (m)", "Phase (deg)"])
+    return df
