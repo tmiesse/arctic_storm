@@ -5,7 +5,8 @@ import requests;            import json
 
 from bs4 import BeautifulSoup;
 from sklearn.neighbors import BallTree
-
+from scipy.stats import linregress
+from sklearn.metrics import root_mean_squared_error
 
 def noaa_data(begin,end,station,vdatum='NAVD',interval='6',
                        form='json',t_zone='GMT',unit='metric',product='water_level'):
